@@ -436,7 +436,11 @@ input {
 
 @media (max-width: 420px) {
   body {
-    padding: 12px;
+    padding: 10px;
+  }
+
+  .app-container {
+    gap: 12px;
   }
 
   .app-header,
@@ -446,7 +450,7 @@ input {
   }
 
   .app-header {
-    padding: 16px 14px 14px;
+    padding: 14px 12px 12px;
   }
 
   .header-actions {
@@ -455,7 +459,17 @@ input {
   }
 
   .flashcard-container {
-    height: 280px;
+    height: 270px;
+  }
+
+  .study-panel,
+  .quiz-box {
+    padding: 14px 12px;
+  }
+
+  .quiz-box {
+    gap: 10px;
+    min-height: 0;
   }
 
   .controls {

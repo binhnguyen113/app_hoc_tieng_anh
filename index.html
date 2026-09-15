@@ -14,7 +14,7 @@
     <header class="app-header">
       <div>
         <p class="eyebrow">Vocabulary Lab</p>
-        <h1>Flashcard English</h1>
+        <h1>Flashcard English</h1>  
       </div>
 
       <div class="header-actions">
@@ -32,6 +32,11 @@
       </div>
 
       <div class="filter-stack">
+        <label for="data-source">Bộ từ vựng</label>
+        <select id="data-source">
+          <option value="all">Tất cả bộ từ</option>
+        </select>
+
         <label for="study-mode">Ôn theo</label>
         <select id="study-mode">
           <option value="all">Ôn từ vựng</option>
@@ -48,10 +53,6 @@
 
     <!-- MÀN HÌNH 1: FLASHCARD (Giữ nguyên cấu trúc cũ) -->
     <div id="flashcard-screen" class="screen">
-      <div class="stats">
-        <span>Từ số: <strong id="current-index">1</strong> / <strong id="total-words">0</strong></span>
-      </div>
-
       <main class="flashcard-container">
         <div class="card" id="card">
           <div class="card-face card-front">
@@ -92,7 +93,7 @@
           <!-- Các nút đáp án sẽ được JS render tự động vào đây -->
         </div>
 
-        <button class="btn btn-primary btn-full hidden" id="btn-next-quiz">Câu tiếp theo ➡</button>
+        <button class="btn btn-primary btn-full" id="btn-next-quiz">Câu tiếp theo ➡</button>
       </div>
     </div>
 

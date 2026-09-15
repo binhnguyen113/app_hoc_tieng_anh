@@ -1,3 +1,8 @@
+const DATA_SOURCES = [
+  { id: "it", label: "Từ vựng IT", file: "./data.json" },
+  { id: "common", label: "600 từ vựng thông dụng", file: "./data-common.json" }
+];
+
 function normalizeWordRecords(data) {
   if (!Array.isArray(data)) return [];
 
@@ -44,18 +49,26 @@ function normalizeWordRecords(data) {
 }
 
 async function loadWords() {
-  try {
-    const response = await fetch("./data.json");
-    if (!response.ok) {
-      throw new Error("Không đọc được file data.json");
-    }
+  const loadedSources = await Promise.all(DATA_SOURCES.map(async source => {
+    try {
+      const response = await fetch(source.file);
+      if (!response.ok) {
+        throw new Error(`Không đọc được ${source.file}`);
+      }
 
-    const data = await response.json();
-    return normalizeWordRecords(data);
-  } catch (error) {
-    console.warn("Không load được data.json:", error);
-    return [];
-  }
+      const records = normalizeWordRecords(await response.json());
+      return records.map(record => ({
+        ...record,
+        sourceId: source.id,
+        sourceLabel: source.label
+      }));
+    } catch (error) {
+      console.warn(`Không load được ${source.file}:`, error);
+      return [];
+    }
+  }));
+
+  return loadedSources.flat();
 }
 
 let allWords = [];
@@ -66,6 +79,11 @@ let currentIndex = 0;
 let quizScore = 0;
 let currentQuizIndex = 0;
 let quizQuestions = [];
+let quizOptionPool = [];
+let quizRoundMistakes = [];
+let quizCorrectIds = new Set();
+let quizIsRetryRound = false;
+let currentQuizAnswered = false;
 
 // DOM Elements - Common
 const btnToggleMode = document.getElementById("btn-toggle-mode");
@@ -89,6 +107,7 @@ const btnNext = document.getElementById("btn-next");
 const btnSpeak = document.getElementById("btn-speak");
 const studyModeEl = document.getElementById("study-mode");
 const topicFilterEl = document.getElementById("topic-filter");
+const dataSourceEl = document.getElementById("data-source");
 
 // DOM Elements - Quiz
 const quizWordEl = document.getElementById("quiz-word");
@@ -140,8 +159,8 @@ function renderCard(index) {
   currentIndexEl.textContent = index + 1;
   totalWordsEl.textContent = words.length;
 
-  btnPrev.disabled = index === 0;
-  btnNext.disabled = index === words.length - 1;
+  btnPrev.disabled = false;
+  btnNext.disabled = false;
 }
 
 btnFlip.addEventListener("click", () => cardElement.classList.toggle("flipped"));
@@ -151,17 +170,15 @@ cardElement.addEventListener("click", (e) => {
 });
 
 btnNext.addEventListener("click", () => {
-  if (currentIndex < words.length - 1) {
-    currentIndex++;
-    renderCard(currentIndex);
-  }
+  if (words.length === 0) return;
+  currentIndex = (currentIndex + 1) % words.length;
+  renderCard(currentIndex);
 });
 
 btnPrev.addEventListener("click", () => {
-  if (currentIndex > 0) {
-    currentIndex--;
-    renderCard(currentIndex);
-  }
+  if (words.length === 0) return;
+  currentIndex = (currentIndex - 1 + words.length) % words.length;
+  renderCard(currentIndex);
 });
 
 btnSpeak.addEventListener("click", (e) => {
@@ -179,18 +196,22 @@ btnSpeak.addEventListener("click", (e) => {
 function getFilteredWords() {
   const mode = studyModeEl.value;
   const selectedTopic = topicFilterEl.value;
+  const selectedSource = dataSourceEl.value;
+  const availableWords = selectedSource === "all"
+    ? allWords
+    : allWords.filter(word => word.sourceId === selectedSource);
 
   if (mode === "topic") {
     return selectedTopic === "all"
-      ? [...allWords]
-      : allWords.filter(word => word.topic === selectedTopic);
+      ? [...availableWords]
+      : availableWords.filter(word => word.topic === selectedTopic);
   }
 
   if (mode === "noun" || mode === "verb" || mode === "adjective") {
-    return allWords.filter(word => word.type.toLowerCase() === mode);
+    return availableWords.filter(word => word.type.toLowerCase() === mode);
   }
 
-  return [...allWords];
+  return [...availableWords];
 }
 
 function startQuiz() {
@@ -201,32 +222,47 @@ function startQuiz() {
     return;
   }
 
+  quizOptionPool = [...filteredWords];
   quizQuestions = [...filteredWords].sort(() => Math.random() - 0.5);
+  quizRoundMistakes = [];
+  quizCorrectIds = new Set();
+  quizIsRetryRound = false;
   currentQuizIndex = 0;
   quizScore = 0;
   quizScoreEl.textContent = quizScore;
+  btnNextQuiz.classList.remove("hidden");
   loadQuizQuestion();
 }
 
 function loadQuizQuestion() {
-  btnNextQuiz.classList.add("hidden");
-  
-  if (currentQuizIndex >= quizQuestions.length || currentQuizIndex >= 10) {
-    // Hoàn thành bài quiz
-    quizWordEl.textContent = "Hoàn thành! 🎉";
-    quizWordTypeEl.textContent = `Điểm số của bạn: ${quizScore} / ${Math.min(quizQuestions.length, 10)}`;
-    quizOptionsEl.innerHTML = `<button class="btn btn-primary btn-full" onclick="startQuiz()">Làm lại Quiz</button>`;
-    return;
+  if (currentQuizIndex >= quizQuestions.length) {
+    if (quizRoundMistakes.length > 0) {
+      quizQuestions = [...quizRoundMistakes].sort(() => Math.random() - 0.5);
+      quizRoundMistakes = [];
+      quizIsRetryRound = true;
+      currentQuizIndex = 0;
+    } else {
+      quizWordEl.textContent = "Hoàn thành!";
+      quizWordTypeEl.textContent = `Bạn đã đúng hết ${quizCorrectIds.size} câu.`;
+      quizPhoneticEl.textContent = "";
+      quizExampleEl.textContent = "";
+      quizProgressEl.textContent = "Đã hoàn thành";
+      quizOptionsEl.innerHTML = `<button class="btn btn-primary btn-full" onclick="startQuiz()">Làm lại Quiz</button>`;
+      btnNextQuiz.classList.add("hidden");
+      return;
+    }
   }
 
   const currentQ = quizQuestions[currentQuizIndex];
+  currentQuizAnswered = false;
   quizWordEl.textContent = currentQ.word;
   quizWordTypeEl.textContent = currentQ.type;
   quizPhoneticEl.textContent = currentQ.phonetic || "";
   quizExampleEl.textContent = currentQ.example ? `Example: "${currentQ.example}"` : "";
-  quizProgressEl.textContent = `Câu ${currentQuizIndex + 1} / ${Math.min(quizQuestions.length, 10)}`;
+  const roundLabel = quizIsRetryRound ? " · Ôn câu sai" : "";
+  quizProgressEl.textContent = `Câu ${currentQuizIndex + 1} / ${quizQuestions.length}${roundLabel}`;
 
-  const wrongOptions = allWords
+  const wrongOptions = quizOptionPool
     .filter(w => w.id !== currentQ.id)
     .sort(() => Math.random() - 0.5)
     .slice(0, 3);
@@ -245,18 +281,27 @@ function loadQuizQuestion() {
 }
 
 function selectQuizAnswer(selectedId, correctId, selectedBtn) {
+  if (currentQuizAnswered) return;
+
+  currentQuizAnswered = true;
+
   // Khóa tất cả các nút sau khi đã chọn
   const allBtns = quizOptionsEl.querySelectorAll(".quiz-option-btn");
   allBtns.forEach(btn => btn.disabled = true);
 
   if (selectedId === correctId) {
     selectedBtn.classList.add("correct");
-    quizScore++;
+    quizCorrectIds.add(correctId);
+    quizScore = quizCorrectIds.size;
     quizScoreEl.textContent = quizScore;
   } else {
     selectedBtn.classList.add("wrong");
+    if (!quizRoundMistakes.some(word => word.id === correctId)) {
+      const missedWord = quizOptionPool.find(word => word.id === correctId);
+      if (missedWord) quizRoundMistakes.push(missedWord);
+    }
     allBtns.forEach(btn => {
-      const matchedOpt = allWords.find(w => w.id === correctId);
+      const matchedOpt = quizOptionPool.find(w => w.id === correctId);
       if (matchedOpt && btn.textContent === matchedOpt.meaning) {
         btn.classList.add("correct");
       }
@@ -267,6 +312,13 @@ function selectQuizAnswer(selectedId, correctId, selectedBtn) {
 }
 
 btnNextQuiz.addEventListener("click", () => {
+  if (!currentQuizAnswered) {
+    const skippedWord = quizQuestions[currentQuizIndex];
+    if (skippedWord && !quizRoundMistakes.some(word => word.id === skippedWord.id)) {
+      quizRoundMistakes.push(skippedWord);
+    }
+  }
+
   currentQuizIndex++;
   loadQuizQuestion();
 });
@@ -284,7 +336,10 @@ btnQuizSpeak.addEventListener("click", () => {
 });
 
 function updateTopicOptions() {
-  const topics = [...new Set(allWords.map(item => item.topic).filter(Boolean))];
+  const availableWords = dataSourceEl.value === "all"
+    ? allWords
+    : allWords.filter(item => item.sourceId === dataSourceEl.value);
+  const topics = [...new Set(availableWords.map(item => item.topic).filter(Boolean))];
   topicFilterEl.innerHTML = '<option value="all">Tất cả chủ đề</option>';
 
   topics.forEach(topic => {
@@ -292,6 +347,17 @@ function updateTopicOptions() {
     option.value = topic;
     option.textContent = topic;
     topicFilterEl.appendChild(option);
+  });
+}
+
+function updateDataSourceOptions() {
+  dataSourceEl.innerHTML = '<option value="all">Tất cả bộ từ</option>';
+
+  DATA_SOURCES.forEach(({ id: sourceId, label: sourceLabel }) => {
+    const option = document.createElement("option");
+    option.value = sourceId;
+    option.textContent = sourceLabel;
+    dataSourceEl.appendChild(option);
   });
 }
 
@@ -307,10 +373,9 @@ function startTypingPractice() {
   }
 
   typingQuestions = [...filteredWords]
-    .map((word, index) => ({ ...word, _random: Math.random(), _index: index }))
+    .map(word => ({ ...word, _random: Math.random() }))
     .sort((a, b) => a._random - b._random)
-    .map(({ _random, _index, ...word }) => word)
-    .slice(0, Math.min(filteredWords.length, 10));
+    .map(({ _random, ...word }) => word);
 
   currentTypingIndex = 0;
   typingScore = 0;
@@ -327,17 +392,13 @@ function renderTypingQuestion() {
   typingInputEl.focus();
 
   if (currentTypingIndex >= typingQuestions.length) {
-    typingMeaningEl.textContent = "Hoàn thành! 🎉";
-    typingProgressEl.textContent = `Câu ${typingQuestions.length}/${typingQuestions.length}`;
-    typingFeedbackEl.textContent = `Điểm của bạn: ${typingScore} / ${typingQuestions.length}`;
-    typingInputEl.disabled = true;
-    btnCheckTyping.disabled = true;
-    return;
+    typingQuestions = [...typingQuestions].sort(() => Math.random() - 0.5);
+    currentTypingIndex = 0;
   }
 
   const currentWord = typingQuestions[currentTypingIndex];
   typingMeaningEl.textContent = currentWord.meaning;
-  typingProgressEl.textContent = `Câu ${currentTypingIndex + 1} / ${typingQuestions.length}`;
+  typingProgressEl.textContent = `Câu ${currentTypingIndex + 1}`;
   typingInputEl.disabled = false;
   btnCheckTyping.disabled = false;
   typingFeedbackEl.textContent = "";
@@ -407,6 +468,10 @@ studyModeEl.addEventListener("change", () => {
 });
 
 topicFilterEl.addEventListener("change", applyStudyMode);
+dataSourceEl.addEventListener("change", () => {
+  updateTopicOptions();
+  applyStudyMode();
+});
 
 // --- CHUYỂN ĐỔI GIAO DIỆN MÀN HÌNH ---
 let currentMode = "flashcard";
@@ -480,6 +545,7 @@ typingInputEl.addEventListener("keydown", (event) => {
 async function initApp() {
   allWords = await loadWords();
   words = [...allWords];
+  updateDataSourceOptions();
   updateTopicOptions();
   topicFilterEl.classList.toggle("hidden", studyModeEl.value !== "topic");
   currentIndex = 0;
